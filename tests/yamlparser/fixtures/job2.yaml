@@ -1,0 +1,25 @@
+- job:
+    name: 'string_parameter 2'
+    description: 'second job'
+    parameters:
+      - string:
+          name: string_test2
+          default: Next
+          description: 'second string'
+    builders:
+      - copyartifact:
+          project: 'string_parameter 1'
+          filter: checktime.txt
+          target: ''
+          which-build: last-successful
+          stable: true
+
+      - shell: |
+         echo ====== >> checktime.txt
+         echo $string_test2 >> checktime.txt
+         date >> checktime.txt
+         cat checktime.txt
+    publishers:
+      - archive:
+          artifacts: checktime.txt
+

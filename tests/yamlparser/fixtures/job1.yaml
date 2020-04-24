@@ -1,0 +1,28 @@
+- job:
+    name: 'string_parameter 1'
+    description: 'first job'
+    scm:
+        - git:
+            url: 'https://github.com/tvhien/default'
+            branches:
+             - '*/master'
+            credentials-id: 'ID1'
+    parameters:
+      - string:
+          name: string_test
+          default: What time is it?
+          description: 'frist string'
+    builders:
+      - shell: |
+         echo $string_test
+         echo ------
+         echo $string_test >> checktime.txt
+         echo ---
+         date >> checktime.txt
+         #_now=$(date +"%m_%d_%Y")
+         #cp checktime.txt "$.checktime.txt"
+         #cp checktime.txt "step_checktime.txt"
+    publishers:
+      - archive:
+          artifacts: checktime.txt
+
