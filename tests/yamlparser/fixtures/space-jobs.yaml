@@ -1,0 +1,101 @@
+- job-template:
+    name: '{folder}/fossa-repository-scanning-tool'
+    node: 'docker-el7'
+    concurrent: true
+    wrappers:
+      - timestamps
+      - build-user-vars
+      - ansicolor:
+          colormap: xterm
+      - workspace-cleanup
+    parameters:
+      - string:
+          name: REPOSITORIES
+          description: 'List of repositories, input value "all" for scan all repositories'
+      - string:
+          name: BRANCH
+          default: 'master'
+          description: 'Git branch of repository will be scanned, this BRANCH must be existed in all repos of REPOSITORIES parameter'
+      - string:
+          name: DOCKER_IMAGE
+          default: 'harbor.intgdc.com/ci/gdc-fossa-cli:latest'
+          description: 'Docker image will run the scanning'
+      - string:
+          name: INIT_OPTS
+          description: 'Extra options for fossa-cli init command'
+      - string:
+          name: ANALYZE_OPTS
+          description: 'Extra options for fossa-cli analyze command'
+
+    builders:
+      - shell: |
+            #!${{HOME}}/git-repos/ci-infra/cish/cishell
+            # Do not exit when fossa command run failed
+            set +e
+
+            # Output files
+            log_dir="./output"
+            successful_list="$log_dir/successful_repos.txt"
+            not_found_plugin_list="$log_dir/not_found_plugin_repos.txt"
+            other_erros_list="$log_dir/other_errors_repos.txt"
+
+            mkdir -p $log_dir
+
+            cish open-vault
+            publish-secret FOSSA_TOKEN="$VAULT_PREFIX/fossa-token"
+
+            scanning_repos() {{
+                local repos_name=$1
+                checkout_dir="checkout/$repos_name"
+                o git clone --branch $BRANCH git@github.com:gooddata/$repos_name.git $checkout_dir
+
+                docker run --rm -e FOSSA_API_KEY=$FOSSA_TOKEN -e USER_UID=$(id -u) -e USER_GID=$(id -g) \
+                    -e INIT_OPTS=$INIT_OPTS -e ANALYZE_OPTS=$ANALYZE_OPTS -v `pwd`/$checkout_dir:/home/fossa \
+                    $DOCKER_IMAGE scan $repos_name
+
+                ret=$?
+                case $ret in
+                    0)
+                        echo -e "$repos_name\towners: $owners" >> $successful_list ;;
+                    101)
+                        echo -e "$repos_name\towners: $owners" >> $not_found_plugin_list ;;
+                    *)
+                        echo -e "$repos_name\towners: $owners" >> $other_erros_list ;;
+                esac
+            }}
+            get_owner(){{
+                local repos_name=$1
+                owners='not-found'
+                owners_array=$(yq -r .[].repository.migration.owner github-manager/repositories/$repos_name.yaml)
+                if [ $? -eq 0 ] && [ "$owners_array" != "null" ]; then
+                    owners=$(yq -r '.[]' <<< "$owners_array" | tr '\n' ' ' )
+                fi
+            }}
+
+            o git clone --branch master git@github.com:gooddata/github-manager.git
+            if [ "$REPOSITORIES" == "all" ];then
+                for repos_info in `ls github-manager/repositories`; do
+                    repos_name=$(yq -r .[].repository.name github-manager/repositories/$repos_info)
+                    if [ $? -eq 0 ] && [ "$repos_name" != "null" ]; then
+                        get_owner $repos_name
+                        scanning_repos $repos_name
+                    else
+                        echo "ERROR: Cannot find repos name in file $repos_info_path"
+                    fi
+                done
+            else
+                for repos_name in $REPOSITORIES; do
+                    get_owner $repos_name
+                    scanning_repos $repos_name
+                done
+            fi
+
+            # Check result, only scan result with other errors will mask this job as failed
+            if [ -f $other_erros_list ]; then
+                echo "Found some repositories scanned failed, please check them on artifact $other_erros_list"
+                exit 1
+            fi
+            exit 0
+    publishers:
+        - archive:
+              artifacts: 'output/*_repos.txt'

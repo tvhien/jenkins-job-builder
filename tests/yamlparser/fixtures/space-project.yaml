@@ -1,0 +1,11 @@
+- project:
+    name: SPACE
+    owner: SPACE / SETI
+    email-recipients: 'guild.seti@gooddata.com'
+    folder: space
+    jobs:
+      - '{folder}/fossa-repository-scanning-tool'
+
+- job:
+    name: 'space'
+    project-type: 'folder'
